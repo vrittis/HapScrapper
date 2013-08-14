@@ -1,0 +1,164 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using HtmlAgilityPack;
+using System.Text.RegularExpressions;
+
+namespace HapScrapper
+{
+    class Program
+    {
+        class FNAIMEntry
+        {
+            public string Titre { get; set; }
+            public string Description {get; set;}
+            public string Surface {get; set;}
+            public string Prix {get; set;}
+            public string Charges { get; set; }
+
+        }
+
+
+        interface IProcessor
+        {
+            void ProcessElement(HtmlNode node, FNAIMEntry entry);
+        }
+
+        class RegexProcessor: IProcessor
+        {
+            public Regex _rx { get; set; }
+            public Action<FNAIMEntry, MatchCollection> _action { get; set; }
+            private string nodeContent;
+
+            public RegexProcessor(Regex rx, Action<FNAIMEntry, MatchCollection> action)
+            {
+                _rx = rx;
+                _action = action;
+            }
+
+            public void ProcessElement(HtmlNode node, FNAIMEntry entry)
+            {
+                var collection = _rx.Matches(node.InnerHtml);
+                _action(entry, collection);
+            }
+        }
+
+        class HAPProcessor: IProcessor
+        {
+            public Action<FNAIMEntry, HtmlNode> _action { get; set; }
+
+            public HAPProcessor(Action<FNAIMEntry, HtmlNode> action)
+            {
+                _action = action;
+            }
+
+            public void ProcessElement(HtmlNode node, FNAIMEntry entry)
+            {
+                try
+                {
+                    _action(entry, node);
+                }
+                catch {
+                    Console.WriteLine("Oops");
+                }
+                
+            }
+        }
+
+        static List<IProcessor> processingActions = new List<IProcessor>();
+
+        static void Add(string regex, Action<FNAIMEntry, MatchCollection> action)
+		{
+			var key = new Regex(regex, RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace|RegexOptions.Multiline);
+            processingActions.Add(new RegexProcessor(key, action));
+		}
+
+        static void Add(Action<FNAIMEntry, HtmlNode> action)
+        {
+            processingActions.Add(new HAPProcessor(action));
+        }
+
+        static void Main(string[] args)
+        {
+            Add(@"(\d+)\s*m²", (entry, collection) => { // surface
+                if (collection.Count == 0)
+					return;
+				var value = collection[0].Groups[1].Value;
+                entry.Surface = value;
+            });
+
+            Add(@"([\d\s]+) &euro;", (entry, collection) => // prix
+            {
+                if (collection.Count == 0)
+                    return;
+                var value = collection[0].Groups[1].Value.Trim();
+                entry.Prix = value;
+            });
+
+            Add((entry, node) => // Titre
+            {
+                entry.Titre = node.SelectSingleNode("./h3/a").InnerText;
+            });
+
+            Add((entry, node) =>
+            {
+                entry.Description = node.SelectSingleNode("./p[@class='resume']/a").InnerText;
+            });
+
+
+            // résultats
+            var resultats = new List<FNAIMEntry>();
+
+
+
+            // todo: replace id_localite with info from ws: http://www.fnaim.fr/include/ajax/ajax.localite.autocomplete.php?term=75012
+            string url = "http://www.fnaim.fr/18-louer.htm?ID_LOCALITE=11892&TYPE[]=1&TYPE[]=2&PRIX_MIN=&PRIX_MAX=&ip={0}";
+            bool nextPageAvailable = true;
+            int currentPage = 1;
+            while (nextPageAvailable)
+            { 
+                string pagedUrl = string.Format(url, currentPage);
+                HtmlWeb web = new HtmlWeb();
+                HtmlAgilityPack.HtmlDocument d = web.Load(pagedUrl);
+
+                int itemCount = 0;
+
+                foreach(HtmlNode item in d.DocumentNode.SelectNodes("//div[@class='itemContent']"))
+                {
+                    itemCount++;
+                    
+                    try
+                    {
+                        var FNAIMItem = new FNAIMEntry();
+
+                        foreach (var action in processingActions)
+                        {
+                            action.ProcessElement(item, FNAIMItem);
+                        }
+
+                        resultats.Add(FNAIMItem);
+
+                        Console.WriteLine("Item: " + FNAIMItem.Titre);
+                        Console.WriteLine("\\tSurface " + FNAIMItem.Surface);
+                        Console.WriteLine("\\tPrix " + FNAIMItem.Prix);
+                        Console.WriteLine("\\tDescription " + FNAIMItem.Description);
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine();
+                        Console.WriteLine("-------------ERROR-------------");
+                        Console.WriteLine(item.InnerHtml);
+                        Console.WriteLine(e);
+                        throw;
+                    }
+                }
+
+                nextPageAvailable = d.DocumentNode.SelectNodes("//div[@id='centre']/div[contains(@class, 'blocNavigation')]/div[contains(@class, 'prevnext')]/a[contains(@class, 'next')]") != null;// itemCount > 0;
+                currentPage++;
+            }
+
+            Console.WriteLine("Résultats " + resultats.Count);
+        }
+    }
+}

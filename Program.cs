@@ -16,7 +16,10 @@ namespace HapScrapper
             public string Surface {get; set;}
             public string Prix {get; set;}
             public string Charges { get; set; }
-
+            public string Reference { get; set; }
+            public string TypeDeBien { get; set; }
+            public int NomDePieces { get; set; }
+            //TODO: compléter éventuellement avec les champs manquants
         }
 
 
@@ -106,19 +109,41 @@ namespace HapScrapper
                 entry.Description = node.SelectSingleNode("./p[@class='resume']/a").InnerText;
             });
 
+            Add((entry, node) =>
+                {
+                    string hrefContent = node.SelectSingleNode("./h3/a").Attributes["href"].Value;
+                    entry.Reference = hrefContent.Split(new string[] { "/" }, StringSplitOptions.RemoveEmptyEntries)[1];
+                });
+
+            Add((entry, node) =>
+            {
+                string typeDeBien = node.SelectSingleNode("./h3/a").InnerHtml;
+                entry.TypeDeBien = typeDeBien.Split(new string[] { " " }, StringSplitOptions.RemoveEmptyEntries)[0];
+            });
+
+            Add(@"(\d+)\s*pièce\(s\)", (entry, collection) =>
+            { 
+                if (collection.Count == 0)
+                    return;
+                var value = collection[0].Groups[1].Value;
+                entry.NomDePieces = Convert.ToInt32(value);
+            });
+            //TODO: compléter éventuellement avec des règles de traitement
+
 
             // résultats
             var resultats = new List<FNAIMEntry>();
 
 
 
-            // todo: replace id_localite with info from ws: http://www.fnaim.fr/include/ajax/ajax.localite.autocomplete.php?term=75012
-            string url = "http://www.fnaim.fr/18-louer.htm?ID_LOCALITE=11892&TYPE[]=1&TYPE[]=2&PRIX_MIN=&PRIX_MAX=&ip={0}";
+            // TODO: replace id_localite with info from ws: http://www.fnaim.fr/include/ajax/ajax.localite.autocomplete.php?term=<code_postal>
+            var identifiantLocaliteFNAIM = "32926";
+            string url = "http://www.fnaim.fr/18-louer.htm?ID_LOCALITE={0}&TYPE[]=1&TYPE[]=2&PRIX_MIN=&PRIX_MAX=&ip={1}";
             bool nextPageAvailable = true;
             int currentPage = 1;
             while (nextPageAvailable)
-            { 
-                string pagedUrl = string.Format(url, currentPage);
+            {
+                string pagedUrl = string.Format(url, identifiantLocaliteFNAIM, currentPage);
                 HtmlWeb web = new HtmlWeb();
                 HtmlAgilityPack.HtmlDocument d = web.Load(pagedUrl);
 
@@ -143,9 +168,12 @@ namespace HapScrapper
                         Console.WriteLine("\\tSurface " + FNAIMItem.Surface);
                         Console.WriteLine("\\tPrix " + FNAIMItem.Prix);
                         Console.WriteLine("\\tDescription " + FNAIMItem.Description);
+
+                        //TODO: sauvegarder en base de données
                     }
                     catch (Exception e)
                     {
+                        //TODO: Sauvegarder une erreur en base de données
                         Console.WriteLine();
                         Console.WriteLine("-------------ERROR-------------");
                         Console.WriteLine(item.InnerHtml);
